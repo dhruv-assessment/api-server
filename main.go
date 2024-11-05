@@ -7,6 +7,7 @@ import (
 
 func main() {
 	e := echo.New()
-	e.GET("/", handler.HelloWorldHandler)
+	e.GET("/helloworld", handler.HelloWorldHandler)
+	e.POST("/facerecognition", handler.FaceRecognition)
 	e.Logger.Fatal(e.Start(":1323"))
 }
