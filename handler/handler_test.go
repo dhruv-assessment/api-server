@@ -30,19 +30,13 @@ func TestHelloWorldHandler(t *testing.T) {
 func TestFaceRecognition(t *testing.T) {
 	e := echo.New()
 
-	filePath := "testfile.txt"
-	fileContent := "This is a test file content."
-	err := os.WriteFile(filePath, []byte(fileContent), 0644)
-	assert.NoError(t, err)
-	defer os.Remove(filePath)
-
-	file, err := os.Open(filePath)
+	file, err := os.Open("test_000.jpg")
 	assert.NoError(t, err)
 	defer file.Close()
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile("inputFile", filepath.Base(filePath))
+	part, err := writer.CreateFormFile("inputFile", filepath.Base("test.jpg"))
 	assert.NoError(t, err)
 	_, err = io.Copy(part, file)
 	assert.NoError(t, err)
@@ -57,8 +51,6 @@ func TestFaceRecognition(t *testing.T) {
 	err = FaceRecognition(c)
 	if assert.NoError(t, err) {
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "File created", rec.Body.String())
+		assert.Equal(t, "Paul\n", rec.Body.String())
 	}
-
-	os.Remove(filePath)
 }
