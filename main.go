@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,13 @@ import (
 
 func main() {
 	e := echo.New()
+	e.GET("/", func(c echo.Context) error {
+		data, err := json.MarshalIndent(e.Routes(), "", "  ")
+		if err != nil {
+			return err
+		}
+		return c.String(http.StatusOK, string(data))
+	})
 	e.GET("/health", handler.HealthHandler)
 	e.POST("/facerecognition", handler.FaceRecognition)
 	e.POST("/temperature", handler.PostTemperature)
