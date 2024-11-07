@@ -21,8 +21,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-func HelloWorldHandler(c echo.Context) error {
-	return c.String(http.StatusOK, "Hello, World!")
+func HealthHandler(c echo.Context) error {
+	return c.String(http.StatusOK, "Up and running!")
 }
 
 type mapValueSQS struct {

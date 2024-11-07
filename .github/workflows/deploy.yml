@@ -1,0 +1,124 @@
+name: Deploy REST API
+
+on:
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+    inputs:
+      ref-name:
+        description: 'A git ref. commit, branch or tag'
+        required: true
+        default: 'main'
+      tag-prefix:
+        description: 'A prefix to add to the image tag'
+        required: false
+        default: ''
+
+env:
+  GHCR_REGISTRY_USERNAME: ${{ github.actor }}
+  GHCR_REGISTRY_PASSWORD: ${{ secrets.GHCR_TOKEN }}
+  GHCR_REGISTRY: ghcr.io/dhruv-assessment/api-server
+  SERVER_USERNAME: ${{ vars.SERVER_USERNAME }}
+  SERVER_IP_ADDR: ${{ vars.SERVER_IP_ADDR }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.get-tag.outputs.IMAGE_TAG }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.ref-name }}
+      - name: Login to docker
+        run: |
+            docker login -u=${{ env.GHCR_REGISTRY_USERNAME }} -p=${{ env.GHCR_REGISTRY_PASSWORD }} ${{ env.GHCR_REGISTRY }}
+      - name: Set image tag env var
+        id: get-tag
+        run: |
+            commit_hash=$(git rev-parse --short HEAD)
+            tag_prefix="${{ inputs.tag-prefix }}"
+            [ -n "${{ inputs.tag-prefix }}" ] && tag_prefix="${{ inputs.tag-prefix }}-"
+            # making env variable available to subsequent steps
+            # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions#setting-an-environment-variable
+            echo "IMAGE_TAG=$tag_prefix$commit_hash" >> "$GITHUB_ENV"
+            echo "IMAGE_TAG=$tag_prefix$commit_hash" >> "$GITHUB_OUTPUT"
+      - name: Build and Push Docker image
+        run: |
+            docker build -t ${{ env.GHCR_REGISTRY }}:$IMAGE_TAG .
+            docker push ${{ env.GHCR_REGISTRY }}:$IMAGE_TAG
+        env:
+            DOCKER_BUILDKIT: 1
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+    steps:
+      - name: Install SSH client
+        run: sudo apt-get install -y ssh
+      - name: Set Docker image
+        run: echo "DOCKER_IMAGE=${{ env.GHCR_REGISTRY }}:${{ needs.build.outputs.image_tag }}" >> $GITHUB_ENV
+      - name: Deploy to Server
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ env.SSH_PRIVATE_KEY}}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USERNAME }}@${{ env.SERVER_IP_ADDR }} << 'EOF'
+            # Pull the latest image
+            docker login -u=${{ env.GHCR_REGISTRY_USERNAME }} -p=${{ env.GHCR_REGISTRY_PASSWORD }} ${{ env.GHCR_REGISTRY }}
+            docker pull ${{ env.DOCKER_IMAGE }}
+
+            if docker ps --filter "name=api-server-blue" --format '{{.Names}}' | grep -w "api-server-blue"; then
+                CURRENT_CONTAINER="api-server-blue"
+                NEXT_CONTAINER="api-server-green"
+                CURRENT_PORT=8081
+                NEXT_PORT=8082
+            elif docker ps --filter "name=api-server-green" --format '{{.Names}}' | grep -w "api-server-green"; then
+                CURRENT_CONTAINER="api-server-green"
+                NEXT_CONTAINER="api-server-blue"
+                CURRENT_PORT=8082
+                NEXT_PORT=8081
+            else
+                # Initial deployment scenario: Default to blue as current
+                CURRENT_CONTAINER=""
+                NEXT_CONTAINER="api-server-blue"
+                CURRENT_PORT=8082
+                NEXT_PORT=8081
+            fi
+
+            docker run -d -e INFLUXDB_TOKEN=${{ secrets.INFLUXDB_TOKEN }} \
+              -e INFLUXDB_URL=${{ vars.INFLUXDB_URL }} \
+              -e INFLUXDB_BUCKET_NAME=${{ vars.INFLUXDB_BUCKET_NAME }} \
+              -e INFLUXDB_ORG_NAME=${{ vars.INFLUXDB_ORG_NAME }} \
+              -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+              -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}\
+              -e AWS_DEFAULT_REGION=${{ vars.AWS_DEFAULT_REGION }}\
+              -e AWS_IN_BUCKET_NAME=${{ vars.AWS_IN_BUCKET_NAME }} \
+              -e AWS_OUT_BUCKET_NAME=${{ vars.AWS_OUT_BUCKET_NAME }} \
+              -e AWS_REQ_URL=${{ vars.AWS_REQ_URL }} \
+              -e AWS_RESP_URL=${{ vars.AWS_RESP_URL }} \
+              --stop-timeout 120 \
+              --name $NEXT_CONTAINER -p $NEXT_PORT:1323 ${{ env.DOCKER_IMAGE }}
+
+            sleep 10
+
+            if curl -s http://localhost:$NEXT_PORT/health; then
+                echo "Health check passed. Switching traffic to new container."
+                sed -i "s/$CURRENT_PORT/$NEXT_PORT/" /etc/nginx/conf.d/web-server.conf
+                nginx -s reload
+
+                if [ -n "$CURRENT_CONTAINER" ]; then
+                    docker stop $CURRENT_CONTAINER || true
+                    docker rm $CURRENT_CONTAINER || true
+                fi
+            else
+                echo "Health check failed. Rolling back to previous container."
+
+                # Stop and remove the new container if health check fails
+                docker stop $NEXT_CONTAINER || true
+                docker rm $NEXT_CONTAINER || true
+            fi
+          EOF

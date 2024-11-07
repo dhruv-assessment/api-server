@@ -16,7 +16,7 @@ import (
 
 func main() {
 	e := echo.New()
-	e.GET("/helloworld", handler.HelloWorldHandler)
+	e.GET("/health", handler.HealthHandler)
 	e.POST("/facerecognition", handler.FaceRecognition)
 	e.POST("/temperature", handler.PostTemperature)
 

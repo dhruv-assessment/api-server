@@ -16,8 +16,8 @@ func TestHelloWorldHandler(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	if assert.NoError(t, HelloWorldHandler(c)) {
+	if assert.NoError(t, HealthHandler(c)) {
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "Hello, World!", rec.Body.String())
+		assert.Equal(t, "Up and running!", rec.Body.String())
 	}
 }
