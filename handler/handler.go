@@ -3,20 +3,67 @@ package handler
 import (
 	"context"
 	"fmt"
-	"io"
+	"log"
 	"net/http"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/dhruv-assessment/api-server/database"
+	"github.com/dhruv-assessment/api-server/service"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/labstack/echo/v4"
 )
 
 func HelloWorldHandler(c echo.Context) error {
 	return c.String(http.StatusOK, "Hello, World!")
+}
+
+type mapValueSQS struct {
+	prediction    string
+	receiptHandle string
+}
+
+var (
+	mapSQSMessages = make(map[string]mapValueSQS)
+	mapMutex       sync.RWMutex
+)
+
+func WaitForSQSResponseMessageTest() {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return
+	}
+	client := sqs.NewFromConfig(cfg)
+	for {
+		result, err := client.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
+			QueueUrl:              aws.String(os.Getenv("AWS_RESP_URL")),
+			VisibilityTimeout:     360,
+			MessageAttributeNames: []string{"Request-Queue-Message-ID"},
+			WaitTimeSeconds:       0,
+			MaxNumberOfMessages:   10,
+		})
+		if err != nil {
+			return
+		}
+
+		mapMutex.Lock()
+		for _, message := range result.Messages {
+			mapSQSMessages[*message.MessageAttributes["Request-Queue-Message-ID"].StringValue] = mapValueSQS{
+				prediction:    *message.Body,
+				receiptHandle: *message.ReceiptHandle,
+			}
+		}
+		mapMutex.Unlock()
+
+		time.Sleep(time.Millisecond * 500)
+	}
 }
 
 func FaceRecognition(c echo.Context) error {
@@ -31,24 +78,59 @@ func FaceRecognition(c echo.Context) error {
 	}
 	defer src.Close()
 
-	dst, err := os.Create(inputFile.Filename)
+	if _, err := service.UploadToReqS3(inputFile.Filename, src); err != nil {
+		return c.String(http.StatusBadRequest, fmt.Sprintf("Unable to upload image to S3: %v", err))
+	}
+	responseMessageID, err := service.SendMessageToSQS(inputFile.Filename)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, fmt.Sprintf("unable to create file: %v", err))
-	}
-	defer dst.Close()
-
-	if _, err = io.Copy(dst, src); err != nil {
-		return c.String(http.StatusInternalServerError, fmt.Sprintf("unable to copy file: %v", err))
+		return c.String(http.StatusBadRequest, fmt.Sprintf("Unable to send message to request queue: %v", err))
 	}
 
-	prediction, err := exec.Command("python3", os.Getenv("PATH_TO_MODEL"), inputFile.Filename).Output()
-	if err != nil {
-		return c.String(http.StatusInternalServerError, fmt.Sprintf("Not able to run the model: %v", err))
+	var prediction string
+
+	for {
+		flag := 0
+		var tempKey string
+		mapMutex.RLock()
+		for key, value := range mapSQSMessages {
+			if key == responseMessageID {
+				prediction = value.prediction
+				flag = 1
+
+				cfg, err := config.LoadDefaultConfig(context.TODO())
+				if err != nil {
+					return c.String(http.StatusBadRequest, fmt.Sprintf("unable to load aws config: %v", err))
+				}
+
+				client := sqs.NewFromConfig(cfg)
+				if _, err = client.DeleteMessage(context.TODO(), &sqs.DeleteMessageInput{
+					QueueUrl:      aws.String(os.Getenv("AWS_RESP_URL")),
+					ReceiptHandle: aws.String(value.receiptHandle),
+				}); err != nil {
+					return c.String(http.StatusBadRequest, fmt.Sprintf("unable to create sqs config: %v", err))
+				}
+
+				tempKey = key
+				break
+			}
+		}
+		mapMutex.RUnlock()
+		if flag == 1 {
+			mapMutex.Lock()
+			delete(mapSQSMessages, tempKey)
+			mapMutex.Unlock()
+			break
+		}
+		time.Sleep(time.Millisecond * 500)
 	}
 
-	os.Remove(inputFile.Filename)
+	filenameWithoutExt := strings.TrimSuffix(inputFile.Filename, filepath.Ext(inputFile.Filename))
+	if err = service.UploadToRespS3(filenameWithoutExt, prediction); err != nil {
+		log.Fatalf("Unable to upload the prediction to resp S3: %v", err)
+	}
 
-	return c.String(http.StatusOK, string(prediction))
+	responseData := fmt.Sprintf("%s:%s", filenameWithoutExt, strings.TrimSpace(prediction))
+	return c.String(http.StatusOK, string(responseData))
 }
 
 type TemperatureData struct {

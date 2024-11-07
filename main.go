@@ -11,5 +11,8 @@ func main() {
 	e.GET("/helloworld", handler.HelloWorldHandler)
 	e.POST("/facerecognition", handler.FaceRecognition)
 	e.POST("/temperature", handler.PostTemperature)
+
+	go handler.WaitForSQSResponseMessageTest()
+
 	e.Logger.Fatal(e.Start(":1323"))
 }
