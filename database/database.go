@@ -25,6 +25,6 @@ func NewWriteClient() {
 		NewDatabase()
 	}
 	bucket := os.Getenv("INFLUXDB_BUCKET_NAME")
-	org := os.Getenv("ORG_NAME")
+	org := os.Getenv("INFLUXDB_ORG_NAME")
 	WriteClient = Instance.WriteAPIBlocking(org, bucket)
 }
