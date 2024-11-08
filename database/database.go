@@ -21,10 +21,13 @@ func NewDatabase() {
 }
 
 func NewWriteClient() {
+	// Check if the main client instance is nil
 	if Instance == nil {
 		NewDatabase()
 	}
+	// Retrieve bucket and organization information
 	bucket := os.Getenv("INFLUXDB_BUCKET_NAME")
 	org := os.Getenv("INFLUXDB_ORG_NAME")
+	// Create a new blocking write client
 	WriteClient = Instance.WriteAPIBlocking(org, bucket)
 }

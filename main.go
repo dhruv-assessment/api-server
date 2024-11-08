@@ -17,10 +17,12 @@ import (
 
 func main() {
 	e := echo.New()
+
 	e.GET("/", func(c echo.Context) error {
+		log.Println("Received GET request on /")
 		data, err := json.MarshalIndent(e.Routes(), "", "  ")
 		if err != nil {
-			return err
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		return c.String(http.StatusOK, string(data))
 	})
@@ -28,9 +30,10 @@ func main() {
 	e.POST("/facerecognition", handler.FaceRecognition)
 	e.POST("/temperature", handler.PostTemperature)
 
-	go handler.WaitForSQSResponseMessageTest()
+	// Start a background goroutine to handle incoming SQS messages
+	go handler.WaitForSQSResponseMessage()
 
-	// e.Logger.Fatal(e.Start(":1323"))
+	// Start the Echo server in a separate goroutine
 	go func() {
 		if err := e.Start(":1323"); err != nil && err != http.ErrServerClosed {
 			e.Logger.Fatal("shutting down the server")

@@ -21,7 +21,9 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+// HealthHandler handles requests to the health check endpoint
 func HealthHandler(c echo.Context) error {
+	log.Println("Received GET request on /health")
 	return c.String(http.StatusOK, "Up and running!")
 }
 
@@ -35,11 +37,12 @@ var (
 	mapMutex       sync.RWMutex
 )
 
-func WaitForSQSResponseMessageTest() {
+func WaitForSQSResponseMessage() {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return
 	}
+	// Create SQS client from config
 	client := sqs.NewFromConfig(cfg)
 	for {
 		result, err := client.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
@@ -54,6 +57,7 @@ func WaitForSQSResponseMessageTest() {
 		}
 
 		mapMutex.Lock()
+		// Store received messages in mapSQSMessages
 		for _, message := range result.Messages {
 			mapSQSMessages[*message.MessageAttributes["Request-Queue-Message-ID"].StringValue] = mapValueSQS{
 				prediction:    *message.Body,
@@ -66,9 +70,11 @@ func WaitForSQSResponseMessageTest() {
 	}
 }
 
+// FaceRecognition handles the face recognition process using S3 and SQS
 func FaceRecognition(c echo.Context) error {
+	log.Println("Received POST request on /facerecognition")
 	inputFile, err := c.FormFile("inputFile")
-	if err != nil {
+	if err != nil || inputFile == nil {
 		return c.String(http.StatusBadRequest, fmt.Sprintf("unable to get file: %v", err))
 	}
 
@@ -78,16 +84,19 @@ func FaceRecognition(c echo.Context) error {
 	}
 	defer src.Close()
 
+	// FaceRecognition handles the face recognition process using S3 and SQS
 	if _, err := service.UploadToReqS3(inputFile.Filename, src); err != nil {
-		return c.String(http.StatusBadRequest, fmt.Sprintf("Unable to upload image to S3: %v", err))
+		return c.String(http.StatusInternalServerError, fmt.Sprintf("Unable to upload image to S3: %v", err))
 	}
+
+	// Send a message to the request SQS queue with the file name
 	responseMessageID, err := service.SendMessageToSQS(inputFile.Filename)
 	if err != nil {
-		return c.String(http.StatusBadRequest, fmt.Sprintf("Unable to send message to request queue: %v", err))
+		return c.String(http.StatusInternalServerError, fmt.Sprintf("Unable to send message to request queue: %v", err))
 	}
 
+	// Poll mapSQSMessages until the prediction result is available
 	var prediction string
-
 	for {
 		flag := 0
 		var tempKey string
@@ -99,7 +108,7 @@ func FaceRecognition(c echo.Context) error {
 
 				cfg, err := config.LoadDefaultConfig(context.TODO())
 				if err != nil {
-					return c.String(http.StatusBadRequest, fmt.Sprintf("unable to load aws config: %v", err))
+					return c.String(http.StatusInternalServerError, fmt.Sprintf("unable to load aws config: %v", err))
 				}
 
 				client := sqs.NewFromConfig(cfg)
@@ -107,7 +116,7 @@ func FaceRecognition(c echo.Context) error {
 					QueueUrl:      aws.String(os.Getenv("AWS_RESP_URL")),
 					ReceiptHandle: aws.String(value.receiptHandle),
 				}); err != nil {
-					return c.String(http.StatusBadRequest, fmt.Sprintf("unable to create sqs config: %v", err))
+					return c.String(http.StatusInternalServerError, fmt.Sprintf("unable to delete sqs message: %v", err))
 				}
 
 				tempKey = key
@@ -126,9 +135,10 @@ func FaceRecognition(c echo.Context) error {
 
 	filenameWithoutExt := strings.TrimSuffix(inputFile.Filename, filepath.Ext(inputFile.Filename))
 	if err = service.UploadToRespS3(filenameWithoutExt, prediction); err != nil {
-		log.Fatalf("Unable to upload the prediction to resp S3: %v", err)
+		return c.String(http.StatusInternalServerError, fmt.Sprintf("Unable to upload the prediction to resp S3: %v", err))
 	}
 
+	// Return the response as filename:prediction
 	responseData := fmt.Sprintf("%s:%s", filenameWithoutExt, strings.TrimSpace(prediction))
 	return c.String(http.StatusOK, string(responseData))
 }
@@ -139,14 +149,15 @@ type TemperatureData struct {
 	Fields      map[string]interface{} `json:"fields"`
 }
 
+// PostTemperature handles temperature data submission to InfluxDB
 func PostTemperature(c echo.Context) error {
+	log.Println("Received POST request on /temperature")
 	database.NewWriteClient()
 	temperature := new(TemperatureData)
 	if err := c.Bind(temperature); err != nil {
 		return c.String(http.StatusBadRequest, fmt.Sprintf("error in binding json: %v", err))
 	}
 
-	// Convert fields to the appropriate types (e.g., float64)
 	for key, value := range temperature.Fields {
 		if strValue, ok := value.(string); ok {
 			// Attempt to convert string fields to float64
@@ -162,7 +173,8 @@ func PostTemperature(c echo.Context) error {
 		temperature.Tags,
 		temperature.Fields,
 		time.Now())
-	// Write point immediately
+
+	// Write point
 	if err := database.WriteClient.WritePoint(context.Background(), p); err != nil {
 		return c.String(http.StatusInternalServerError, fmt.Sprintf("error in writing data: %v", err))
 	}
