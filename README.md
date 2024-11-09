@@ -134,3 +134,59 @@ This deployment setup leverages GitHub Actions and Docker for CI/CD, automating 
 
 ### Note
 This Web Tier service is designed to work with the [Load Balancer](https://github.com/dhruv-assessment/load-balancer) for the face recognition endpoint. Please ensure the load balancer is running concurrently to utilize the face recognition functionality effectively.
+
+# API Documentation
+
+This document provides an overview of the API structure and available endpoints for the application.
+
+## API Endpoints
+
+### 1. `/` - List Available Endpoints
+- **Method**: GET
+- **Description**: Returns a list of all available endpoints in the API.
+- **Response**: JSON object with the list of routes.
+
+### 2. `/health` - Health Check
+- **Method**: GET
+- **Description**: Checks if the server is running and responsive.
+- **Response**: Plain text `"Up and running!"`
+- **Status Code**: 200 OK
+
+### 3. `/temperature` - Add Temperature Data to InfluxDB
+- **Method**: POST
+- **Description**: Adds temperature data to InfluxDB.
+- **Request Body**: JSON format with fields for measurement, tags, and fields.
+- **Request Format**:
+  ```json
+  {
+    "measurement": "stat",
+    "tags": {
+      "unit": "temperature"
+    },
+    "fields": {
+      "avg": "55.10",
+      "max": "10.10"
+    }
+  }
+   ```
+  - **measurement**: The name of the measurement to store (e.g., `stat`).
+  - **tags**: A set of tags for categorizing the data (e.g., "unit": `temperature`).
+  - **fields**: Key-value pairs of the data points to store (e.g., `"avg": "55.10", "max": "10.10"`).
+- **Response**: Plain text `Successful` if the data is successfully written to InfluxDB.
+- **Status Codes**:
+   - 200 OK: Data added successfully.
+   - 400 Bad Request: Invalid JSON format or data parsing error.
+   - 500 Internal Server Error: Error writing data to InfluxDB.
+
+### 4. `/facerecognition` - Face Recognition
+- **Method**: POST
+- **Description**: Accepts an image file to detect and recognize a person’s face, returning a prediction.
+- **Request Format**:
+  - **Content Type**: `multipart/form-data`
+  - **Form Field**:
+    - `inputFile`: Key for uploading the image file.
+- **Response**: Plain text containing the filename and the predicted name or result.
+- **Status Codes**:
+  - 200 OK: Face recognized successfully.
+  - 400 Bad Request: Invalid file or error in file upload.
+  - 500 Internal Server Error: Error processing the image.
