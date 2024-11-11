@@ -130,7 +130,7 @@ func FaceRecognition(c echo.Context) error {
 			mapMutex.Unlock()
 			break
 		}
-		time.Sleep(time.Millisecond * 500)
+		// time.Sleep(time.Millisecond * 500)
 	}
 
 	filenameWithoutExt := strings.TrimSuffix(inputFile.Filename, filepath.Ext(inputFile.Filename))
