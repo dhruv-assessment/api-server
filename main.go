@@ -12,6 +12,7 @@ import (
 
 	"github.com/dhruv-assessment/api-server/handler"
 	_ "github.com/joho/godotenv/autoload"
+	"github.com/labstack/echo-contrib/echoprometheus"
 	"github.com/labstack/echo/v4"
 )
 
@@ -29,6 +30,8 @@ func main() {
 	e.GET("/health", handler.HealthHandler)
 	e.POST("/facerecognition", handler.FaceRecognition)
 	e.POST("/temperature", handler.PostTemperature)
+	e.Use(echoprometheus.NewMiddleware("myapp"))   // adds middleware to gather metrics
+	e.GET("/metrics", echoprometheus.NewHandler()) // adds route to serve gathered metrics
 
 	// Start a background goroutine to handle incoming SQS messages
 	go handler.WaitForSQSResponseMessage()
