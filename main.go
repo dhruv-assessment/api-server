@@ -30,6 +30,7 @@ func main() {
 	e.GET("/health", handler.HealthHandler)
 	e.POST("/facerecognition", handler.FaceRecognition)
 	e.POST("/temperature", handler.PostTemperature)
+	e.POST("/log", handler.LogError)
 	e.Use(echoprometheus.NewMiddleware("myapp"))   // adds middleware to gather metrics
 	e.GET("/metrics", echoprometheus.NewHandler()) // adds route to serve gathered metrics
 

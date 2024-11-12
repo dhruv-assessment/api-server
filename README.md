@@ -190,3 +190,26 @@ This document provides an overview of the API structure and available endpoints 
   - 200 OK: Face recognized successfully.
   - 400 Bad Request: Invalid file or error in file upload.
   - 500 Internal Server Error: Error processing the image.
+
+### 5. `/log` - Add Log Data to InfluxDB
+- **Method**: POST
+- **Description**: Adds log data to InfluxDB.
+- **Request Body**: JSON format with fields for service, endpoint, error and traceback.
+- **Request Format**:
+  ```json
+  {
+  "service": "user-service",
+  "endpoint": "/api/users",
+  "error": "Database connection timeout",
+  "traceback": "File \"app.py\", line 42, in get_user\n raise ConnectionError(\"Database timeout\")"
+   }
+   ```
+  - **service**: Name of the service.
+  - **endpoint**: Name of the endpoint.
+  - **error**: Error message that was received.
+  - **traceback**: Traceback message for further debugging.
+- **Response**: Plain text `Successful` if the data is successfully written to InfluxDB.
+- **Status Codes**:
+   - 200 OK: Data added successfully.
+   - 400 Bad Request: Invalid JSON format or data parsing error.
+   - 500 Internal Server Error: Error writing data to InfluxDB.

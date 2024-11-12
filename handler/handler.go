@@ -182,3 +182,42 @@ func PostTemperature(c echo.Context) error {
 	database.Instance.Close()
 	return c.String(http.StatusOK, "Successfull")
 }
+
+type Log struct {
+	Service   string `json:"service"`
+	Endpoint  string `json:"endpoint"`
+	Error     string `json:"error"`
+	TraceBack string `json:"traceback"`
+}
+
+func LogError(c echo.Context) error {
+	log.Println("Received POST request on /log")
+	database.NewWriteClient()
+	newLog := new(Log)
+	if err := c.Bind(newLog); err != nil {
+		return c.String(http.StatusBadRequest, fmt.Sprintf("error in binding json: %v", err))
+	}
+
+	if newLog.Endpoint == "" || newLog.Service == "" {
+		return c.String(http.StatusBadRequest, "missing required fields: endpoint and service")
+	}
+
+	p := influxdb2.NewPoint("logs",
+		map[string]string{
+			"service":  newLog.Service,
+			"endpoint": newLog.Endpoint,
+		},
+		map[string]interface{}{
+			"error_msg": newLog.Error,
+			"traceback": newLog.TraceBack,
+		},
+		time.Now())
+
+	// Write point
+	if err := database.WriteClient.WritePoint(context.Background(), p); err != nil {
+		return c.String(http.StatusInternalServerError, fmt.Sprintf("error in writing data: %v", err))
+	}
+	// Ensures background processes finishes
+	database.Instance.Close()
+	return c.String(http.StatusOK, "Successfull")
+}
